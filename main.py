@@ -212,21 +212,30 @@ async def logshift(interaction: discord.Interaction,
 async def countallquota(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True)
 
-    member_role_ids = {role.id for role in interaction.user.roles}
-    allowed_roles = set(RANK_ORDER[:6])  # Captain and above
-    if not member_role_ids.intersection(allowed_roles):
+    # Check if user has Lieutenant Colonel+ roles by ID
+    member_role_ids = [role.id for role in interaction.user.roles]
+    allowed_ids = set([
+        1393357571892445206,  # Lieutenant Colonel
+        1393070827934580786,  # Colonel
+        1393344391522943206,  # Deputy Superintendent
+        1393070510040154196,  # Superintendent
+        1393071057279258806,  # Major
+        1393070960206413824   # Captain
+    ])
+    if not any(rid in allowed_ids for rid in member_role_ids):
         await interaction.followup.send("❌ You do not have permission to use this command.", ephemeral=True)
         return
 
-    # Sum duration excluding rating and notes (rating & notes not used in calculation anyway)
+    # Query shifts data, excluding rating and notes from duration sum
     c.execute("""
-        SELECT user_id, SUM(duration), 
-            (SELECT rank_role_id FROM shifts s2 WHERE s2.user_id = s.user_id ORDER BY ROWID DESC LIMIT 1)
-        FROM shifts s
-        GROUP BY user_id
+    SELECT user_id, SUM(duration), (
+        SELECT rank_role_id FROM shifts s2 WHERE s2.user_id = s.user_id ORDER BY ROWID DESC LIMIT 1
+    )
+    FROM shifts s
+    GROUP BY user_id
     """)
     results = c.fetchall()
-    logged_users = {uid: (total or 0, rank_id or None) for uid, total, rank_id in results}
+    logged_users = {uid: (total or 0, rank or 0) for uid, total, rank in results}
 
     guild = bot.get_guild(GUILD_ID)
     if not guild:
@@ -248,42 +257,44 @@ async def countallquota(interaction: discord.Interaction):
     user_found = False
 
     for member in guild.members:
-        member_roles_ids = {role.id for role in member.roles}
-        member_ranks = [rid for rid in RANK_ORDER if rid in member_roles_ids]
-        if not member_ranks:
+        ranks = [role.id for role in member.roles if role.id in RANK_ROLE_IDS]
+        if not ranks:
             continue
 
-        main_rank_role_id = member_ranks[0]
+        # Highest rank based on order in RANK_ROLE_IDS list
+        main_rank_id = sorted(ranks, key=lambda x: RANK_ROLE_IDS.index(x))[0]
+        main_rank_name = RANKS[RANK_ROLE_IDS.index(main_rank_id)]
+
         uid = str(member.id)
-        total_hours = logged_users.get(uid, (0, main_rank_role_id))[0]
+        total_hours = logged_users.get(uid, (0, main_rank_id))[0]
 
-        h = int(total_hours)
-        m = int(round((total_hours - h) * 60))
-        time_str = f"{h}h {m}m"
+        has_loa = any(role.id == LOA_ROLE_ID for role in member.roles)
+        has_roa = any(role.id == ROA_ROLE_ID for role in member.roles)
 
-        has_loa = ROLE_IDS["LOA"] in member_roles_ids
-        has_roa = ROLE_IDS["ROA"] in member_roles_ids
-
-        if has_loa:
-            symbol = "📘 Leave of Absence"
-        elif main_rank_role_id in EXEMPT:
+        if main_rank_name in EXEMPT:
             symbol = "✴️ Exempt"
-        elif main_rank_role_id in QUOTAS:
-            required = QUOTAS[main_rank_role_id]
+            time_str = ""  # Hide time for exempt
+        elif has_loa:
+            symbol = "📘 Leave of Absence"
+            h = int(total_hours)
+            m = int(round((total_hours - h) * 60))
+            time_str = f"{h}h {m}m"
+        elif main_rank_name in QUOTAS:
+            required = QUOTAS[main_rank_name]
             if has_roa:
                 required /= 2  # 50% quota for ROA
             passed = total_hours >= required
             symbol = "<:ROA:1394778057822441542>" if passed and has_roa else ("✅" if passed else "❌")
+            h = int(total_hours)
+            m = int(round((total_hours - h) * 60))
+            time_str = f"{h}h {m}m"
         else:
             symbol = "❌"
+            h = int(total_hours)
+            m = int(round((total_hours - h) * 60))
+            time_str = f"{h}h {m}m"
 
-        rank_name = None
-        for name, rid in ROLE_IDS.items():
-            if rid == main_rank_role_id:
-                rank_name = name
-                break
-
-        message += f"- {member.mention} ({rank_name or 'Unknown'}): {time_str} {symbol}\n"
+        message += f"- {member.mention} ({main_rank_name}): {time_str} {symbol}\n"
         user_found = True
 
     if not user_found:
@@ -295,6 +306,7 @@ async def countallquota(interaction: discord.Interaction):
     conn.commit()
 
     await interaction.followup.send(message)
+
 
 @bot.tree.command(name="resetquota", description="Clear all logged quota data", guild=discord.Object(id=GUILD_ID))
 async def resetquota(interaction: discord.Interaction):
