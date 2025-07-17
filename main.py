@@ -102,4 +102,4 @@ async def count_all_quota(interaction: discord.Interaction):
     await interaction.response.send_message(message, ephemeral=True)
 
 keep_alive()
-client.run("YOUR_DISCORD_BOT_TOKEN")
+client.run(os.getenv("TOKEN"))
