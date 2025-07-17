@@ -45,12 +45,15 @@ async def on_ready():
     print("🔁 Background task running...")
 
 @tree.command(name="logshift", description="Log a patrol shift")
-@app_commands.describe(minutes="How many minutes was your shift?", rating="Rate your shift from 1 to 5 (optional)", notes="Any notes about the shift (optional)")
+@app_commands.describe(
+    minutes="How many minutes was your shift?",
+    rating="Rate your shift from 1 to 5 (optional)",
+    notes="Any notes about the shift (optional)"
+)
 async def logshift(interaction: discord.Interaction, minutes: int, rating: int = None, notes: str = None):
     user_id = interaction.user.id
     timestamp = datetime.datetime.utcnow()
 
-    # Create user log list if not exist
     if user_id not in shift_logs:
         shift_logs[user_id] = []
 
@@ -59,14 +62,12 @@ async def logshift(interaction: discord.Interaction, minutes: int, rating: int =
         "timestamp": timestamp,
     }
 
-    # Optional fields
     if rating:
         shift_entry["rating"] = rating
     if notes:
         shift_entry["notes"] = notes
 
     shift_logs[user_id].append(shift_entry)
-
     await interaction.response.send_message(f"✅ Logged {minutes} minutes for your shift.", ephemeral=True)
 
 @tree.command(name="countquota", description="See how many minutes you've logged in the past 2 weeks")
@@ -80,7 +81,6 @@ async def count_quota(interaction: discord.Interaction):
         return
 
     total_minutes = sum(entry["minutes"] for entry in shift_logs[user_id] if entry["timestamp"] >= two_weeks_ago)
-
     await interaction.response.send_message(f"⏱️ You've logged {total_minutes} minutes in the past 2 weeks.", ephemeral=True)
 
 @tree.command(name="countallquota", description="View shift logs of everyone")
@@ -103,4 +103,3 @@ async def count_all_quota(interaction: discord.Interaction):
 
 keep_alive()
 client.run("YOUR_DISCORD_BOT_TOKEN")
-
