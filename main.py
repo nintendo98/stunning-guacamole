@@ -11,11 +11,14 @@ from threading import Thread
 
 # Keep-alive webserver (Replit/Render)
 app = Flask('')
+
 @app.route('/')
 def home():
     return "Bot is alive!"
+
 def run():
     app.run(host='0.0.0.0', port=8080)
+
 Thread(target=run).start()
 
 # ENV Variables
@@ -80,7 +83,7 @@ intents.guilds = True
 intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Database setup (same as before, add rating and notes)
+# Database setup (add rating and notes)
 conn = sqlite3.connect('data.db', check_same_thread=False)
 c = conn.cursor()
 c.execute('''
@@ -98,24 +101,11 @@ CREATE TABLE IF NOT EXISTS shifts (
 ''')
 conn.commit()
 
-def normalize_time(t: str) -> str:
-    t = t.strip().upper().replace("AM", " AM").replace("PM", " PM")
-    if not ("AM" in t or "PM" in t):
-        raise ValueError("AM/PM missing")
-    return t
-
 def get_highest_rank_role_id(member: discord.Member):
     member_roles = {role.name for role in member.roles}
     for rank_name in RANK_ORDER:
         if rank_name in member_roles:
             return ROLE_IDS[rank_name]
-    return None
-
-def get_highest_rank_name(member: discord.Member):
-    member_roles = {role.name for role in member.roles}
-    for rank_name in RANK_ORDER:
-        if rank_name in member_roles:
-            return rank_name
     return None
 
 def has_permission_for_others(member: discord.Member):
@@ -175,17 +165,16 @@ async def logshift(
         return
 
     try:
-    # Try to parse time_started and time_ended using dateutil parser
-    # This allows flexible parsing (12h or 24h)
+        # Parse times with dateutil parser
         t_start = parser.parse(time_started)
         t_end = parser.parse(time_ended)
 
         duration = (t_end - t_start).total_seconds() / 3600.0
         if duration < 0:
             duration += 24
-except Exception:
-    await interaction.response.send_message("❌ Invalid time format. Use `1:10 PM`, `3:30am`, `13:00`, etc.", ephemeral=True)
-    return
+    except Exception:
+        await interaction.response.send_message("❌ Invalid time format. Use `1:10 PM`, `3:30am`, `13:00`, etc.", ephemeral=True)
+        return
 
     rank_role_id = ROLE_IDS.get(rank.value)
     if not rank_role_id:
@@ -220,7 +209,5 @@ except Exception:
 
     await interaction.channel.send(embed=embed)
     await interaction.response.send_message("✅ Shift logged successfully.", ephemeral=True)
-
-# You can add your other commands here (countallquota, resetquota) similarly fixed if needed
 
 bot.run(TOKEN)
