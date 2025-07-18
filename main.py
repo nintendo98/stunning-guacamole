@@ -145,7 +145,9 @@ def has_permission_for_others(member: discord.Member):
     rating="Shift rating out of 10 (optional)",
     notes="Additional notes (optional)"
 )
-@app_commands.choices(rank=[app_commands.Choice(name=r, value=ROLE_IDS[r]) for r in RANK_ORDER if r in ROLE_IDS])
+@app_commands.choices(
+    rank=[app_commands.Choice(name=name, value=rid) for name, rid in ROLE_IDS.items() if rid in RANK_ORDER]
+)
 async def logshift(interaction: discord.Interaction, 
                    session_host: str, 
                    time_started: str, 
