@@ -141,6 +141,19 @@ async def background_task():
     rating="Shift rating 0-10 (optional)",
     notes="Additional notes (optional)"
 )
+@bot.tree.command(name="deletelastshift", description="Delete your last logged shift", guild=discord.Object(id=GUILD_ID))
+async def deletelastshift(interaction: discord.Interaction):
+    user_id = str(interaction.user.id)
+    c.execute("SELECT rowid FROM shifts WHERE user_id = ? ORDER BY rowid DESC LIMIT 1", (user_id,))
+    result = c.fetchone()
+    if result is None:
+        await interaction.response.send_message("❌ No shifts found to delete.", ephemeral=True)
+        return
+
+    c.execute("DELETE FROM shifts WHERE rowid = ?", (result[0],))
+    conn.commit()
+    await interaction.response.send_message("✅ Your last shift log has been deleted.", ephemeral=True)
+
 @app_commands.choices(rank=[app_commands.Choice(name=r, value=r) for r in RANK_ORDER])
 async def logshift(
     interaction: discord.Interaction,
