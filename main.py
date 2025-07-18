@@ -3,6 +3,7 @@ from discord import app_commands
 from discord.ext import commands
 import sqlite3
 import asyncio
+from dateutil import parser
 from datetime import datetime
 import os
 from flask import Flask
@@ -174,15 +175,17 @@ async def logshift(
         return
 
     try:
-        fmt = "%I:%M %p"
-        t_start = datetime.strptime(normalize_time(time_started), fmt)
-        t_end = datetime.strptime(normalize_time(time_ended), fmt)
-        duration = (t_end - t_start).total_seconds() / 3600.0
-        if duration < 0:
-            duration += 24
-    except Exception:
-        await interaction.response.send_message("❌ Invalid time format. Use `1:10 PM`, `3:30am`, etc.", ephemeral=True)
-        return
+    # Try to parse time_started and time_ended using dateutil parser
+    # This allows flexible parsing (12h or 24h)
+    t_start = parser.parse(time_started)
+    t_end = parser.parse(time_ended)
+
+    duration = (t_end - t_start).total_seconds() / 3600.0
+    if duration < 0:
+        duration += 24
+except Exception:
+    await interaction.response.send_message("❌ Invalid time format. Use `1:10 PM`, `3:30am`, `13:00`, etc.", ephemeral=True)
+    return
 
     rank_role_id = ROLE_IDS.get(rank.value)
     if not rank_role_id:
