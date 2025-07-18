@@ -13,16 +13,18 @@ app = Flask('')
 @app.route('/')
 def home():
     return "Bot is alive!"
+
 def run():
     app.run(host='0.0.0.0', port=8080)
+
 Thread(target=run).start()
 
-# ENV Variables
+# Environment Variables
 TOKEN = os.getenv("TOKEN")
 GUILD_ID = int(os.getenv("GUILD_ID"))
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID"))
 
-# Role IDs
+# Role IDs dictionary
 ROLE_IDS = {
     "Superintendent": 1393070510040154196,
     "Deputy Superintendent": 1393344391522943206,
@@ -39,22 +41,22 @@ ROLE_IDS = {
     "LOA": 1393373147545341992,
 }
 
-# Ordered list of rank role IDs from highest to lowest for permissions and sorting
+# Ordered ranks from highest to lowest
 RANK_ORDER = [
-    ROLE_IDS["Superintendent"],
-    ROLE_IDS["Deputy Superintendent"],
-    ROLE_IDS["Colonel"],
-    ROLE_IDS["Lieutenant Colonel"],
-    ROLE_IDS["Major"],
-    ROLE_IDS["Captain"],
-    ROLE_IDS["Lieutenant"],
-    ROLE_IDS["Sergeant"],
-    ROLE_IDS["Corporal"],
-    ROLE_IDS["Master Trooper"],
-    ROLE_IDS["Trooper"],
+    "Superintendent",
+    "Deputy Superintendent",
+    "Colonel",
+    "Lieutenant Colonel",
+    "Major",
+    "Captain",
+    "Lieutenant",
+    "Sergeant",
+    "Corporal",
+    "Master Trooper",
+    "Trooper",
 ]
 
-# Quotas mapped by role ID
+# Quotas per rank role ID
 QUOTAS = {
     ROLE_IDS["Trooper"]: 2.0,
     ROLE_IDS["Master Trooper"]: 2.0,
@@ -77,11 +79,14 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
 intents.members = True
+
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Database setup with additional rating and notes columns
+# Connect to SQLite DB
 conn = sqlite3.connect('data.db', check_same_thread=False)
 c = conn.cursor()
+
+# Create shifts table with rating and notes
 c.execute('''
 CREATE TABLE IF NOT EXISTS shifts (
     user_id TEXT,
@@ -97,11 +102,29 @@ CREATE TABLE IF NOT EXISTS shifts (
 ''')
 conn.commit()
 
-def normalize_time(t):
+# RANKS list for choices in slash command
+RANKS = RANK_ORDER.copy()
+
+def normalize_time(t: str) -> str:
     t = t.strip().upper().replace("AM", " AM").replace("PM", " PM")
     if not ("AM" in t or "PM" in t):
         raise ValueError("AM/PM missing")
     return t
+
+def get_highest_rank_role_id(member: discord.Member) -> int | None:
+    member_roles = {role.id for role in member.roles}
+    for rank_name in RANK_ORDER:
+        rid = ROLE_IDS.get(rank_name)
+        if rid and rid in member_roles:
+            return rid
+    return None
+
+def has_permission_for_others(member: discord.Member) -> bool:
+    # Lt. Colonel and above can add shifts for others
+    member_roles = {role.id for role in member.roles}
+    permitted_ranks = RANK_ORDER[:4]  # 0: Superintendent, 1: Deputy Superintendent, 2: Colonel, 3: Lieutenant Colonel
+    permitted_role_ids = {ROLE_IDS[r] for r in permitted_ranks}
+    return bool(member_roles.intersection(permitted_role_ids))
 
 @bot.event
 async def on_ready():
@@ -112,71 +135,49 @@ async def on_ready():
 async def background_task():
     await bot.wait_until_ready()
     while not bot.is_closed():
-        print("🔁 Background task running...")
         try:
             import requests
-            # Replace with your actual keep-alive URL if needed
             r = requests.get("https://shift-logger-bot.onrender.com/")
             print(f"Self-ping response: {r.status_code} at {datetime.utcnow()}")
         except Exception as e:
             print("Ping failed:", e)
         await asyncio.sleep(300)  # 5 minutes
 
-def get_highest_rank_role_id(member: discord.Member):
-    member_role_ids = {role.id for role in member.roles}
-    for rid in RANK_ORDER:
-        if rid in member_role_ids:
-            return rid
-    return None
-
-def has_permission_for_others(member: discord.Member):
-    # Lt. Colonel and above can add shifts for others
-    member_role_ids = {role.id for role in member.roles}
-    allowed_roles = set(RANK_ORDER[:5])  # Top 5 roles (0-based indexing)
-    return bool(member_role_ids.intersection(allowed_roles))
-
-@bot.tree.command(name="logshift", description="Log your WSP shift", guild=discord.Object(id=GUILD_ID))
+# /logshift command with optional user, rating, notes, and permission check
+@bot.tree.command(name="logshift", description="Log your WSP shift or for others (if authorized)", guild=discord.Object(id=GUILD_ID))
 @app_commands.describe(
+    user="User to log shift for (Lt. Colonel+ only, optional)",
     session_host="Who hosted the session?",
     time_started="Start time (e.g. 1:00 PM)",
     time_ended="End time (e.g. 3:15 PM)",
-    rank="Your rank during the shift",
-    rating="(Optional) Rate your shift from 0–10",
-    notes="(Optional) Any shift notes",
-    user="(Optional) Log for someone else (Lt. Colonel+ only)"
+    rank="Rank during the shift",
+    rating="Shift rating 0-10 (optional)",
+    notes="Additional notes (optional)"
 )
-@app_commands.choices(rank=[app_commands.Choice(name=r, value=r) for r in RANKS])
+@app_commands.choices(
+    rank=[app_commands.Choice(name=r, value=ROLE_IDS[r]) for r in RANKS]
+)
 async def logshift(
     interaction: discord.Interaction,
     session_host: str,
     time_started: str,
     time_ended: str,
-    rank: app_commands.Choice[str],
+    rank: app_commands.Choice[int],
+    user: discord.Member = None,
     rating: int = None,
-    notes: str = None,
-    user: discord.User = None
+    notes: str = None
 ):
-    author = interaction.user
-    target_user = author
+    target_user = user or interaction.user
 
-    # Determine if logging for someone else
-    if user and user != author:
-        member = interaction.guild.get_member(author.id)
-        if not member:
-            await interaction.response.send_message("❌ Could not verify your permissions.", ephemeral=True)
-            return
+    # Permission check if logging for others
+    if user and not has_permission_for_others(interaction.user):
+        await interaction.response.send_message("❌ You do not have permission to log shifts for others.", ephemeral=True)
+        return
 
-        role_ids = [role.id for role in member.roles]
-        if not any(role_ids.count(allowed_id) for allowed_id in [
-            ROLE_IDS["Lieutenant Colonel"],
-            ROLE_IDS["Colonel"],
-            ROLE_IDS["Deputy Superintendent"],
-            ROLE_IDS["Superintendent"]
-        ]):
-            await interaction.response.send_message("❌ Only Lieutenant Colonels or higher may log shifts for others.", ephemeral=True)
-            return
-
-        target_user = user
+    # Validate rating if provided
+    if rating is not None and (rating < 0 or rating > 10):
+        await interaction.response.send_message("❌ Rating must be between 0 and 10.", ephemeral=True)
+        return
 
     try:
         fmt = "%I:%M %p"
@@ -186,25 +187,33 @@ async def logshift(
         if duration < 0:
             duration += 24
     except Exception:
-        await interaction.response.send_message("❌ Invalid time format. Use `1:10 PM`, `3:30am`, etc.", ephemeral=True)
+        await interaction.response.send_message("❌ Invalid time format. Use `1:10 PM`, `3:30 AM`, etc.", ephemeral=True)
         return
 
-    # Save to database
     c.execute("INSERT INTO shifts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (
-        str(target_user.id), str(target_user), session_host,
-        time_started, time_ended, rank.value,
-        round(duration, 2), rating, notes
+        str(target_user.id),
+        str(target_user),
+        session_host,
+        time_started,
+        time_ended,
+        rank.value,
+        round(duration, 2),
+        rating,
+        notes
     ))
     conn.commit()
 
+    # Find rank name from ROLE_IDS by value
+    rank_name = next((name for name, rid in ROLE_IDS.items() if rid == rank.value), "Unknown")
+
     embed = discord.Embed(title="🚓 Shift Logged", color=discord.Color.blue())
     embed.add_field(name="User", value=target_user.mention, inline=True)
-    embed.add_field(name="Rank", value=rank.value, inline=True)
+    embed.add_field(name="Rank", value=rank_name, inline=True)
     embed.add_field(name="Session Host", value=session_host, inline=False)
     embed.add_field(name="Time", value=f"{time_started} - {time_ended}", inline=False)
     embed.add_field(name="Duration", value=f"{round(duration, 2)} hours", inline=True)
     if rating is not None:
-        embed.add_field(name="Rating", value=str(rating), inline=True)
+        embed.add_field(name="Shift Rating", value=str(rating), inline=True)
     if notes:
         embed.add_field(name="Notes", value=notes, inline=False)
     embed.timestamp = datetime.utcnow()
@@ -213,20 +222,21 @@ async def logshift(
     await interaction.response.send_message("✅ Shift logged successfully.", ephemeral=True)
 
 
+# /countallquota command
 @bot.tree.command(name="countallquota", description="Check everyone's quota", guild=discord.Object(id=GUILD_ID))
 async def countallquota(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True)
 
     member_role_ids = {role.id for role in interaction.user.roles}
-    allowed_roles = set(RANK_ORDER[:6])  # Captain and above
+    allowed_roles = {ROLE_IDS[r] for r in RANK_ORDER[:6]}  # Captain and above
     if not member_role_ids.intersection(allowed_roles):
         await interaction.followup.send("❌ You do not have permission to use this command.", ephemeral=True)
         return
 
-    # Sum duration excluding rating and notes (rating & notes not used in calculation anyway)
+    # Aggregate total duration per user & get their latest rank from DB
     c.execute("""
-        SELECT user_id, SUM(duration), 
-            (SELECT rank_role_id FROM shifts s2 WHERE s2.user_id = s.user_id ORDER BY ROWID DESC LIMIT 1)
+        SELECT user_id, SUM(duration),
+               (SELECT rank_role_id FROM shifts s2 WHERE s2.user_id = s.user_id ORDER BY ROWID DESC LIMIT 1)
         FROM shifts s
         GROUP BY user_id
     """)
@@ -239,11 +249,11 @@ async def countallquota(interaction: discord.Interaction):
         return
 
     message = (
-        "**2-Week Quota Count-up Results are now out!**\n"
+        "**2-Week Quota Count-up Results:**\n"
         "__Quota key:__\n"
         "✴️ - Exempt\n"
         "❌ - Quota Not Met\n"
-        "✅  - Quota Met\n"
+        "✅ - Quota Met\n"
         "📘 - Leave of Absence\n\n"
         "<:ROA:1394778057822441542> - ROA (Reduced Quota Met)\n\n"
         "__Activity Requirements:__\n"
@@ -254,7 +264,7 @@ async def countallquota(interaction: discord.Interaction):
 
     for member in guild.members:
         member_roles_ids = {role.id for role in member.roles}
-        member_ranks = [rid for rid in RANK_ORDER if rid in member_roles_ids]
+        member_ranks = [rid for rid in [ROLE_IDS[r] for r in RANK_ORDER] if rid in member_roles_ids]
         if not member_ranks:
             continue
 
@@ -282,13 +292,9 @@ async def countallquota(interaction: discord.Interaction):
         else:
             symbol = "❌"
 
-        rank_name = None
-        for name, rid in ROLE_IDS.items():
-            if rid == main_rank_role_id:
-                rank_name = name
-                break
+        rank_name = next((name for name, rid in ROLE_IDS.items() if rid == main_rank_role_id), "Unknown")
 
-        message += f"- {member.mention} ({rank_name or 'Unknown'}): {time_str} {symbol}\n"
+        message += f"- {member.mention} ({rank_name}): {time_str} {symbol}\n"
         user_found = True
 
     if not user_found:
@@ -301,12 +307,14 @@ async def countallquota(interaction: discord.Interaction):
 
     await interaction.followup.send(message)
 
+
+# /resetquota command
 @bot.tree.command(name="resetquota", description="Clear all logged quota data", guild=discord.Object(id=GUILD_ID))
 async def resetquota(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True)
 
     member_role_ids = {role.id for role in interaction.user.roles}
-    allowed_roles = set(RANK_ORDER[:6])  # Captain+
+    allowed_roles = {ROLE_IDS[r] for r in RANK_ORDER[:6]}  # Captain+
     if not member_role_ids.intersection(allowed_roles):
         await interaction.followup.send("❌ You do not have permission to use this command.", ephemeral=True)
         return
@@ -315,5 +323,6 @@ async def resetquota(interaction: discord.Interaction):
     conn.commit()
 
     await interaction.followup.send("✅ All quota logs have been cleared.", ephemeral=True)
+
 
 bot.run(TOKEN)
