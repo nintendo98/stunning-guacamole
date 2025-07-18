@@ -182,7 +182,7 @@ async def logshift(
 
         duration = (t_end - t_start).total_seconds() / 3600.0
         if duration < 0:
-        duration += 24
+            duration += 24
 except Exception:
     await interaction.response.send_message("❌ Invalid time format. Use `1:10 PM`, `3:30am`, `13:00`, etc.", ephemeral=True)
     return
