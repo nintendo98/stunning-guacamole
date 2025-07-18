@@ -177,11 +177,11 @@ async def logshift(
     try:
     # Try to parse time_started and time_ended using dateutil parser
     # This allows flexible parsing (12h or 24h)
-    t_start = parser.parse(time_started)
-    t_end = parser.parse(time_ended)
+        t_start = parser.parse(time_started)
+        t_end = parser.parse(time_ended)
 
-    duration = (t_end - t_start).total_seconds() / 3600.0
-    if duration < 0:
+        duration = (t_end - t_start).total_seconds() / 3600.0
+        if duration < 0:
         duration += 24
 except Exception:
     await interaction.response.send_message("❌ Invalid time format. Use `1:10 PM`, `3:30am`, `13:00`, etc.", ephemeral=True)
