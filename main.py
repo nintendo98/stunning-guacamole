@@ -135,7 +135,7 @@ def has_permission_for_others(member: discord.Member):
     allowed_roles = set(RANK_ORDER[:5])  # Top 5 roles (0-based indexing)
     return bool(member_role_ids.intersection(allowed_roles))
 
-@bot.tree.command(name="logshift", description="Log a patrol shift")
+@tree.command(name="logshift", description="Log a patrol shift")
 @app_commands.describe(
     session_host="Who hosted the session?",
     time_started="When did the shift start? (Format: YYYY-MM-DD HH:MM)",
