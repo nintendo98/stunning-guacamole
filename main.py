@@ -217,7 +217,7 @@ async def logshift(
 async def countallquota(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     guild = interaction.guild
-    members = await guild.fetch_members().flatten()
+    members = [member async for member in guild.fetch_members()]
     now = datetime.utcnow()
 
     result = "**📊 Quota Summary (last 14 days)**\n"
