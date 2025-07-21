@@ -108,10 +108,23 @@ def get_highest_rank_role_id(member: discord.Member):
             return ROLE_IDS[rank_name]
     return None
 
+def get_highest_rank_name(member: discord.Member):
+    member_roles = {role.name for role in member.roles}
+    for rank_name in RANK_ORDER:
+        if rank_name in member_roles:
+            return rank_name
+    return None
+
 def has_permission_for_others(member: discord.Member):
     # Lt. Colonel and above can log shifts for others
     member_roles = {role.name for role in member.roles}
     allowed_ranks = RANK_ORDER[:4]  # Superintendent, Deputy Superintendent, Colonel, Lieutenant Colonel
+    return any(rank in member_roles for rank in allowed_ranks)
+
+def has_permission_for_quota_commands(member: discord.Member):
+    # Captain and above can use quota commands
+    member_roles = {role.name for role in member.roles}
+    allowed_ranks = RANK_ORDER[:7]  # Superintendent -> Captain inclusive
     return any(rank in member_roles for rank in allowed_ranks)
 
 @bot.event
@@ -209,5 +222,105 @@ async def logshift(
 
     await interaction.channel.send(embed=embed)
     await interaction.response.send_message("✅ Shift logged successfully.", ephemeral=True)
+
+@bot.tree.command(name="countallquota", description="Check everyone's quota", guild=discord.Object(id=GUILD_ID))
+async def countallquota(interaction: discord.Interaction):
+    await interaction.response.defer(thinking=True)
+
+    if not has_permission_for_quota_commands(interaction.user):
+        await interaction.followup.send("❌ You do not have permission to use this command.", ephemeral=True)
+        return
+
+    # Fetch total duration and last rank_role_id for each user
+    c.execute("""
+        SELECT user_id, SUM(duration), MAX(rowid)
+        FROM shifts
+        GROUP BY user_id
+    """)
+    results = c.fetchall()
+
+    # Map user_id -> (total_hours, last_rank_role_id)
+    user_data = {}
+    for user_id, total_duration, max_rowid in results:
+        c.execute("SELECT rank_role_id FROM shifts WHERE rowid = ?", (max_rowid,))
+        last_rank_role_id = c.fetchone()[0]
+        user_data[user_id] = (total_duration or 0, last_rank_role_id)
+
+    guild = bot.get_guild(GUILD_ID)
+    if not guild:
+        await interaction.followup.send("❌ Guild not found.", ephemeral=True)
+        return
+
+    message = (
+        "**2-Week Quota Count-up Results are now out!**\n"
+        "__Quota key:__\n"
+        "✴️ - Exempt\n"
+        "❌ - Quota Not Met\n"
+        "✅  - Quota Met\n"
+        "📘 - Leave of Absence\n\n"
+        "<:ROA:1394778057822441542> - ROA (Reduced Quota Met)\n\n"
+        "__Activity Requirements:__\n"
+        "Activity Requirements can be found in the database.\n\n"
+    )
+
+    any_logged = False
+
+    for member in guild.members:
+        # Check rank name by roles
+        rank_name = get_highest_rank_name(member)
+        if not rank_name:
+            continue  # skip members with no rank
+
+        user_id_str = str(member.id)
+        total_hours, last_rank_role_id = user_data.get(user_id_str, (0, ROLE_IDS.get(rank_name)))
+
+        # Format time string
+        h = int(total_hours)
+        m = int(round((total_hours - h) * 60))
+        time_str = f"{h}h {m}m"
+
+        # Check LOA and ROA roles
+        has_loa = any(role.id == ROLE_IDS["LOA"] for role in member.roles)
+        has_roa = any(role.id == ROLE_IDS["ROA"] for role in member.roles)
+
+        # Determine quota symbol
+        if has_loa:
+            symbol = "📘 Leave of Absence"
+        elif rank_name in EXEMPT:
+            symbol = "✴️ Exempt"
+        elif rank_name in QUOTAS:
+            required_quota = QUOTAS[rank_name]
+            if has_roa:
+                required_quota /= 2
+            passed = total_hours >= required_quota
+            symbol = "<:ROA:1394778057822441542>" if passed and has_roa else ("✅" if passed else "❌")
+        else:
+            symbol = "❌"
+
+        message += f"- {member.mention} ({rank_name}): {time_str} {symbol}\n"
+        any_logged = True
+
+    if not any_logged:
+        await interaction.followup.send("❌ No quota has been logged.", ephemeral=True)
+        return
+
+    # Clear logs after reporting
+    c.execute("DELETE FROM shifts")
+    conn.commit()
+
+    await interaction.followup.send(message)
+
+@bot.tree.command(name="resetquota", description="Clear all logged quota data", guild=discord.Object(id=GUILD_ID))
+async def resetquota(interaction: discord.Interaction):
+    await interaction.response.defer(thinking=True)
+
+    if not has_permission_for_quota_commands(interaction.user):
+        await interaction.followup.send("❌ You do not have permission to use this command.", ephemeral=True)
+        return
+
+    c.execute("DELETE FROM shifts")
+    conn.commit()
+
+    await interaction.followup.send("✅ All quota logs have been cleared.", ephemeral=True)
 
 bot.run(TOKEN)
