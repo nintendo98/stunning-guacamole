@@ -220,7 +220,6 @@ async def countallquota(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     guild = interaction.guild
 
-    # Fetch members via async list comprehension instead of .flatten()
     members = [member async for member in guild.fetch_members(limit=None)]
     now = datetime.now(timezone.utc)
 
@@ -234,7 +233,7 @@ async def countallquota(interaction: discord.Interaction):
         "<:ROA:1394778057822441542> - ROA (Reduced Quota Met)\n\n"
         "__Activity Requirements:__\n"
         "Activity Requirements can be found in the database.\n\n"
-        "**📊 Quota Summary (last 14 days)**\n"
+        "**📊 Quota Summary (last 14 days)**\n\n"
     )
 
     for member in members:
@@ -243,7 +242,6 @@ async def countallquota(interaction: discord.Interaction):
             message += f"✴️ {member.display_name} - Exempt\n"
             continue
 
-        # LOA or ROA check
         if discord.utils.get(member.roles, id=ROLE_IDS["LOA"]) or discord.utils.get(member.roles, id=ROLE_IDS["ROA"]):
             message += f"📘 {member.display_name} - LOA/ROA\n"
             continue
@@ -259,7 +257,10 @@ async def countallquota(interaction: discord.Interaction):
         status = "✅" if total >= quota else "❌"
         message += f"{status} {member.display_name} ({user_rank}): {round(total, 2)} hrs / {quota} hrs\n"
 
-    await interaction.followup.send(message, ephemeral=True)
+    # Send the message as a text file to avoid 2000 char limit
+    from io import StringIO
+    file = discord.File(StringIO(message), filename="quota_results.txt")
+    await interaction.followup.send("Here are the quota results:", file=file, ephemeral=True)
 
 @bot.tree.command(name="resetquota", description="Wipe all shift logs", guild=discord.Object(id=GUILD_ID))
 async def resetquota(interaction: discord.Interaction):
