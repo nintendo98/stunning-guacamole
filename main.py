@@ -210,8 +210,8 @@ async def logshift(
     embed.set_footer(text="WSP Shift Logger")
     embed.timestamp = datetime.utcnow()
 
-await interaction.response.send_message(embed=embed)
-await interaction.followup.send("✅ Shift logged.", ephemeral=True)
+    await interaction.response.send_message(embed=embed)
+    await interaction.followup.send("✅ Shift logged.", ephemeral=True)
 
 @bot.tree.command(name="countallquota", description="Count quota for all WSP members", guild=discord.Object(id=GUILD_ID))
 async def countallquota(interaction: discord.Interaction):
