@@ -4,7 +4,7 @@ from discord.ext import commands
 import sqlite3
 import asyncio
 from dateutil import parser
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import os
 from flask import Flask
 from threading import Thread
@@ -106,7 +106,7 @@ def get_highest_rank_role_id(member: discord.Member):
     return None
 
 def has_permission_for_others(member: discord.Member):
-    allowed_ranks = RANK_ORDER[:4]
+    allowed_ranks = RANK_ORDER[:4]  # Top 4 ranks allowed
     return any(role.name in allowed_ranks for role in member.roles)
 
 def get_rank_name_from_role_id(role_id):
@@ -196,7 +196,7 @@ async def logshift(
     ))
     conn.commit()
 
-    # Build embed
+    # Build embed for announcement
     embed = discord.Embed(title="✅ Shift Logged", color=discord.Color.blue())
     embed.add_field(name="User", value=target_user.mention, inline=True)
     embed.add_field(name="Rank", value=rank.value, inline=True)
@@ -208,9 +208,9 @@ async def logshift(
     if notes:
         embed.add_field(name="Notes", value=notes, inline=False)
     embed.set_footer(text="WSP Shift Logger")
-    embed.timestamp = datetime.utcnow()
+    embed.timestamp = datetime.now(timezone.utc)
 
-    # Send to the channel where command was invoked
+    # Send embed announcement in the channel where the command was invoked
     await interaction.channel.send(embed=embed)
 
     await interaction.response.send_message("✅ Shift logged.", ephemeral=True)
@@ -219,16 +219,33 @@ async def logshift(
 async def countallquota(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     guild = interaction.guild
-    members = await guild.fetch_members().flatten()
-    now = datetime.utcnow()
 
-    result = "**📊 Quota Summary (last 14 days)**\n"
+    # Fetch members via async list comprehension instead of .flatten()
+    members = [member async for member in guild.fetch_members(limit=None)]
+    now = datetime.now(timezone.utc)
+
+    message = (
+        "**2-Week Quota Count-up Results are now out!**\n"
+        "__Quota key:__\n"
+        "✴️ - Exempt\n"
+        "❌ - Quota Not Met\n"
+        "✅  - Quota Met\n"
+        "📘 - Leave of Absence\n\n"
+        "<:ROA:1394778057822441542> - ROA (Reduced Quota Met)\n\n"
+        "__Activity Requirements:__\n"
+        "Activity Requirements can be found in the database.\n\n"
+        "**📊 Quota Summary (last 14 days)**\n"
+    )
+
     for member in members:
         user_rank = get_member_rank(member)
         if not user_rank or user_rank in EXEMPT:
+            message += f"✴️ {member.display_name} - Exempt\n"
             continue
+
+        # LOA or ROA check
         if discord.utils.get(member.roles, id=ROLE_IDS["LOA"]) or discord.utils.get(member.roles, id=ROLE_IDS["ROA"]):
-            result += f"• {member.display_name}: 🟡 LOA/ROA\n"
+            message += f"📘 {member.display_name} - LOA/ROA\n"
             continue
 
         c.execute("SELECT duration FROM shifts WHERE user_id=? AND rank_role_id=? AND time_in >= ?", (
@@ -240,9 +257,9 @@ async def countallquota(interaction: discord.Interaction):
         total = sum(durations)
         quota = QUOTAS.get(user_rank, 0)
         status = "✅" if total >= quota else "❌"
-        result += f"• {member.display_name} ({user_rank}): {round(total, 2)} hrs / {quota} hrs {status}\n"
+        message += f"{status} {member.display_name} ({user_rank}): {round(total, 2)} hrs / {quota} hrs\n"
 
-    await interaction.followup.send(result, ephemeral=True)
+    await interaction.followup.send(message, ephemeral=True)
 
 @bot.tree.command(name="resetquota", description="Wipe all shift logs", guild=discord.Object(id=GUILD_ID))
 async def resetquota(interaction: discord.Interaction):
