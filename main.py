@@ -109,9 +109,8 @@ def get_highest_rank_role_id(member: discord.Member):
     return None
 
 def has_permission_for_others(member: discord.Member):
-    # Lt. Colonel and above can log shifts for others
     member_roles = {role.name for role in member.roles}
-    allowed_ranks = RANK_ORDER[:4]  # Superintendent, Deputy Superintendent, Colonel, Lieutenant Colonel
+    allowed_ranks = RANK_ORDER[:4]
     return any(rank in member_roles for rank in allowed_ranks)
 
 @bot.event
@@ -154,21 +153,17 @@ async def logshift(
 ):
     target_user = user or interaction.user
 
-    # Permission check for logging others
     if user and not has_permission_for_others(interaction.user):
         await interaction.response.send_message("❌ You do not have permission to log shifts for others.", ephemeral=True)
         return
 
-    # Validate rating
     if rating is not None and (rating < 0 or rating > 10):
         await interaction.response.send_message("❌ Rating must be between 0 and 10.", ephemeral=True)
         return
 
     try:
-        # Parse times with dateutil parser
         t_start = parser.parse(time_started)
         t_end = parser.parse(time_ended)
-
         duration = (t_end - t_start).total_seconds() / 3600.0
         if duration < 0:
             duration += 24
@@ -181,7 +176,6 @@ async def logshift(
         await interaction.response.send_message("❌ Invalid rank selected.", ephemeral=True)
         return
 
-    # Insert shift into DB
     c.execute("INSERT INTO shifts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (
         str(target_user.id),
         str(target_user),
@@ -209,5 +203,49 @@ async def logshift(
 
     await interaction.channel.send(embed=embed)
     await interaction.response.send_message("✅ Shift logged successfully.", ephemeral=True)
+
+# ✅ Add these commands below /logshift
+
+@bot.tree.command(name="reset_quota", description="Reset all quota data (ADMIN ONLY)", guild=discord.Object(id=GUILD_ID))
+async def reset_quota(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ You need administrator permissions to use this command.", ephemeral=True)
+        return
+
+    c.execute("DELETE FROM shifts")
+    conn.commit()
+    await interaction.response.send_message("✅ All quota data has been reset.", ephemeral=True)
+
+@bot.tree.command(name="count_quota", description="Count your total logged shift time", guild=discord.Object(id=GUILD_ID))
+async def count_quota(interaction: discord.Interaction):
+    user_id = str(interaction.user.id)
+    c.execute("SELECT SUM(duration) FROM shifts WHERE user_id = ?", (user_id,))
+    total = c.fetchone()[0]
+    total = total or 0.0
+
+    member_roles = {role.name for role in interaction.user.roles}
+    rank = next((r for r in RANK_ORDER if r in member_roles), None)
+
+    if not rank:
+        await interaction.response.send_message("❌ Could not determine your rank. Make sure you have a valid WSP role.", ephemeral=True)
+        return
+
+    if rank in EXEMPT:
+        await interaction.response.send_message(f"✅ You are **{rank}** and are exempt from quotas. Total logged time: **{round(total, 2)} hours**.", ephemeral=True)
+        return
+
+    quota = QUOTAS.get(rank)
+    if quota is None:
+        await interaction.response.send_message(f"❌ No quota set for rank **{rank}**.", ephemeral=True)
+        return
+
+    embed = discord.Embed(title="📊 Quota Summary", color=discord.Color.green())
+    embed.add_field(name="Rank", value=rank, inline=True)
+    embed.add_field(name="Total Time Logged", value=f"{round(total, 2)} hours", inline=True)
+    embed.add_field(name="Quota Requirement", value=f"{quota} hours", inline=True)
+    embed.add_field(name="Status", value="✅ Met" if total >= quota else "⚠️ Not Met", inline=True)
+    embed.timestamp = datetime.utcnow()
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 bot.run(TOKEN)
