@@ -4,7 +4,7 @@ from discord.ext import commands
 import sqlite3
 import asyncio
 from dateutil import parser
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 from flask import Flask
 from threading import Thread
@@ -210,12 +210,8 @@ async def logshift(
     embed.set_footer(text="WSP Shift Logger")
     embed.timestamp = datetime.utcnow()
 
-    # Send to log channel
-    log_channel = bot.get_channel(LOG_CHANNEL_ID)
-    if log_channel:
-        await log_channel.send(embed=embed)
-    else:
-        await interaction.channel.send("⚠️ Log channel not found.")
+    # Send to the channel where command was invoked
+    await interaction.channel.send(embed=embed)
 
     await interaction.response.send_message("✅ Shift logged.", ephemeral=True)
 
