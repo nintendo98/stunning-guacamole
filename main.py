@@ -4,12 +4,12 @@ from discord.ext import commands
 import sqlite3
 import asyncio
 from dateutil import parser
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 import os
 from flask import Flask
 from threading import Thread
 
-# Web server to keep alive (Render)
+# Keep-alive webserver (Replit/Render)
 app = Flask('')
 
 @app.route('/')
@@ -21,12 +21,12 @@ def run():
 
 Thread(target=run).start()
 
-# ENV variables
+# ENV Variables
 TOKEN = os.getenv("TOKEN")
 GUILD_ID = int(os.getenv("GUILD_ID"))
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID"))
 
-# Roles and rank logic
+# Role IDs dictionary
 ROLE_IDS = {
     "Superintendent": 1393070510040154196,
     "Deputy Superintendent": 1393344391522943206,
@@ -43,6 +43,7 @@ ROLE_IDS = {
     "LOA": 1393373147545341992,
 }
 
+# RANK ORDER list (high to low)
 RANK_ORDER = [
     "Superintendent",
     "Deputy Superintendent",
@@ -57,16 +58,18 @@ RANK_ORDER = [
     "Trooper",
 ]
 
+# Quotas mapped by rank name
 QUOTAS = {
-    "Trooper": 2.0,
-    "Master Trooper": 2.0,
-    "Corporal": 2.0,
-    "Sergeant": 1.5,
+    "Trooper": 3.5,
+    "Master Trooper": 3.0,
+    "Corporal": 2.5,
+    "Sergeant": 2.0,
     "Lieutenant": 1.5,
     "Captain": 1.0,
     "Major": 1.0,
 }
 
+# Exempt ranks set
 EXEMPT = {
     "Lieutenant Colonel",
     "Colonel",
@@ -80,7 +83,7 @@ intents.guilds = True
 intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Database setup
+# Database setup (add rating and notes)
 conn = sqlite3.connect('data.db', check_same_thread=False)
 c = conn.cursor()
 c.execute('''
@@ -106,20 +109,10 @@ def get_highest_rank_role_id(member: discord.Member):
     return None
 
 def has_permission_for_others(member: discord.Member):
-    allowed_ranks = RANK_ORDER[:4]  # Top 4 ranks allowed
-    return any(role.name in allowed_ranks for role in member.roles)
-
-def get_rank_name_from_role_id(role_id):
-    for name, r_id in ROLE_IDS.items():
-        if r_id == role_id:
-            return name
-    return "Unknown"
-
-def get_member_rank(member: discord.Member):
-    for rank in RANK_ORDER:
-        if discord.utils.get(member.roles, name=rank):
-            return rank
-    return None
+    # Lt. Colonel and above can log shifts for others
+    member_roles = {role.name for role in member.roles}
+    allowed_ranks = RANK_ORDER[:4]  # Superintendent, Deputy Superintendent, Colonel, Lieutenant Colonel
+    return any(rank in member_roles for rank in allowed_ranks)
 
 @bot.event
 async def on_ready():
@@ -132,20 +125,21 @@ async def background_task():
     while not bot.is_closed():
         try:
             import requests
-            requests.get("https://shift-logger-bot.onrender.com/")
+            r = requests.get("https://shift-logger-bot.onrender.com/")
+            print(f"Self-ping {r.status_code} at {datetime.utcnow()}")
         except Exception as e:
             print("Ping failed:", e)
         await asyncio.sleep(300)
 
-@bot.tree.command(name="logshift", description="Log a WSP shift", guild=discord.Object(id=GUILD_ID))
+@bot.tree.command(name="logshift", description="Log your WSP shift or for others (Lt. Colonel+ only)", guild=discord.Object(id=GUILD_ID))
 @app_commands.describe(
     user="User to log shift for (Lt. Colonel+ only)",
     session_host="Who hosted the session?",
-    time_started="Start time (e.g. 1:00 PM or 13:00)",
-    time_ended="End time (e.g. 3:00 PM or 15:00)",
+    time_started="Start time (e.g. 1:00 PM)",
+    time_ended="End time (e.g. 3:15 PM)",
     rank="Your rank during the shift",
     rating="Shift rating 0-10 (optional)",
-    notes="Any notes (optional)"
+    notes="Additional notes (optional)"
 )
 @app_commands.choices(rank=[app_commands.Choice(name=r, value=r) for r in RANK_ORDER])
 async def logshift(
@@ -159,30 +153,35 @@ async def logshift(
     notes: str = None
 ):
     target_user = user or interaction.user
+
+    # Permission check for logging others
     if user and not has_permission_for_others(interaction.user):
-        await interaction.response.send_message("❌ You can't log for others.", ephemeral=True)
+        await interaction.response.send_message("❌ You do not have permission to log shifts for others.", ephemeral=True)
         return
 
+    # Validate rating
     if rating is not None and (rating < 0 or rating > 10):
-        await interaction.response.send_message("❌ Rating must be 0–10.", ephemeral=True)
+        await interaction.response.send_message("❌ Rating must be between 0 and 10.", ephemeral=True)
         return
 
     try:
+        # Parse times with dateutil parser
         t_start = parser.parse(time_started)
         t_end = parser.parse(time_ended)
+
         duration = (t_end - t_start).total_seconds() / 3600.0
         if duration < 0:
             duration += 24
     except Exception:
-        await interaction.response.send_message("❌ Invalid time format. Use 1:30 PM or 13:30", ephemeral=True)
+        await interaction.response.send_message("❌ Invalid time format. Use `1:10 PM`, `3:30am`, `13:00`, etc.", ephemeral=True)
         return
 
     rank_role_id = ROLE_IDS.get(rank.value)
     if not rank_role_id:
-        await interaction.response.send_message("❌ Invalid rank.", ephemeral=True)
+        await interaction.response.send_message("❌ Invalid rank selected.", ephemeral=True)
         return
 
-    # Log in DB
+    # Insert shift into DB
     c.execute("INSERT INTO shifts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (
         str(target_user.id),
         str(target_user),
@@ -196,75 +195,19 @@ async def logshift(
     ))
     conn.commit()
 
-    # Build embed for announcement
-    embed = discord.Embed(title="✅ Shift Logged", color=discord.Color.blue())
+    embed = discord.Embed(title="🚓 Shift Logged", color=discord.Color.blue())
     embed.add_field(name="User", value=target_user.mention, inline=True)
     embed.add_field(name="Rank", value=rank.value, inline=True)
     embed.add_field(name="Session Host", value=session_host, inline=False)
     embed.add_field(name="Time", value=f"{time_started} - {time_ended}", inline=False)
     embed.add_field(name="Duration", value=f"{round(duration, 2)} hours", inline=True)
     if rating is not None:
-        embed.add_field(name="Rating", value=str(rating), inline=True)
+        embed.add_field(name="Shift Rating", value=str(rating), inline=True)
     if notes:
         embed.add_field(name="Notes", value=notes, inline=False)
-    embed.set_footer(text="WSP Shift Logger")
-    embed.timestamp = datetime.now(timezone.utc)
+    embed.timestamp = datetime.utcnow()
 
-    # Send embed announcement in the channel where the command was invoked
     await interaction.channel.send(embed=embed)
-
-    await interaction.response.send_message("✅ Shift logged.", ephemeral=True)
-
-@bot.tree.command(name="countallquota", description="Display the 2-week quota count results.")
-async def countallquota(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
-
-    # Full message split into chunks under 2000 characters
-    chunks = [
-        "**2-Week Quota Count-up Results are now out!**\n"
-        "__Quota key:__\n"
-        "✴️ - Exempt\n"
-        "❌ - Quota Not Met\n"
-        "✅ - Quota Met\n"
-        "📘 - Leave of Absence\n\n",
-        
-        "<:ROA:1394778057822441542> - ROA (Reduced Quota Met)\n\n"
-        "__Activity Requirements:__\n"
-        "Activity Requirements can be found in the database.\n\n",
-        
-        "**📊 Quota Summary (last 14 days)**\n\n"
-        # Add more quota summary content here,
-        # make sure each chunk is less than 2000 chars.
-    ]
-
-    # Example additional quota summary lines (add your real data here)
-    quota_summary_lines = [
-        "User1: ✅✅❌✅✅✅✅✅✅✅✅✅✅✅\n",
-        "User2: ✅✅✅✅✅✅✅✅✅✅✅✅✅✅\n",
-        # ...
-    ]
-
-    # To avoid breaking Discord limit, split quota summary if large
-    summary_chunk = ""
-    for line in quota_summary_lines:
-        if len(summary_chunk) + len(line) > 1900:  # leave some room
-            chunks.append(summary_chunk)
-            summary_chunk = ""
-        summary_chunk += line
-    if summary_chunk:
-        chunks.append(summary_chunk)
-
-    # Send all chunks one by one
-    for chunk in chunks:
-        await interaction.followup.send(chunk, ephemeral=True)
-
-@bot.tree.command(name="resetquota", description="Wipe all shift logs", guild=discord.Object(id=GUILD_ID))
-async def resetquota(interaction: discord.Interaction):
-    if not has_permission_for_others(interaction.user):
-        await interaction.response.send_message("❌ You don't have permission.", ephemeral=True)
-        return
-    c.execute("DELETE FROM shifts")
-    conn.commit()
-    await interaction.response.send_message("🧹 All shift logs wiped.", ephemeral=True)
+    await interaction.response.send_message("✅ Shift logged successfully.", ephemeral=True)
 
 bot.run(TOKEN)
