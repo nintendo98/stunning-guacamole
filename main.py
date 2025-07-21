@@ -60,10 +60,10 @@ RANK_ORDER = [
 
 # Quotas mapped by rank name
 QUOTAS = {
-    "Trooper": 3.5,
-    "Master Trooper": 3.0,
-    "Corporal": 2.5,
-    "Sergeant": 2.0,
+    "Trooper": 2.0,
+    "Master Trooper": 2.0,
+    "Corporal": 2.0,
+    "Sergeant": 1.5,
     "Lieutenant": 1.5,
     "Captain": 1.0,
     "Major": 1.0,
