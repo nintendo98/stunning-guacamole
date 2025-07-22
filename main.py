@@ -241,7 +241,6 @@ async def countallquota(interaction: discord.Interaction):
     """)
     results = c.fetchall()
 
-    # Map user_id -> (total_hours, last_rank_role_id)
     user_data = {}
     for user_id, total_duration, max_rowid in results:
         c.execute("SELECT rank_role_id FROM shifts WHERE rowid = ?", (max_rowid,))
@@ -252,6 +251,8 @@ async def countallquota(interaction: discord.Interaction):
     if not guild:
         await interaction.followup.send("❌ Guild not found.", ephemeral=True)
         return
+
+    WSP_ROLE_ID = 1226292433503916104  # Wisconsin State Patrol role ID
 
     message = (
         "**2-Week Quota Count-up Results are now out!**\n"
@@ -268,24 +269,24 @@ async def countallquota(interaction: discord.Interaction):
     any_logged = False
 
     for member in guild.members:
-        # Check rank name by roles
+        # *** Skip non-WSP members ***
+        if WSP_ROLE_ID not in [role.id for role in member.roles]:
+            continue
+
         rank_name = get_highest_rank_name(member)
         if not rank_name:
-            continue  # skip members with no rank
+            continue
 
         user_id_str = str(member.id)
         total_hours, last_rank_role_id = user_data.get(user_id_str, (0, ROLE_IDS.get(rank_name)))
 
-        # Format time string
         h = int(total_hours)
         m = int(round((total_hours - h) * 60))
         time_str = f"{h}h {m}m"
 
-        # Check LOA and ROA roles
         has_loa = any(role.id == ROLE_IDS["LOA"] for role in member.roles)
         has_roa = any(role.id == ROLE_IDS["ROA"] for role in member.roles)
 
-        # Determine quota symbol
         if has_loa:
             symbol = "📘 Leave of Absence"
         elif rank_name in EXEMPT:
@@ -306,7 +307,6 @@ async def countallquota(interaction: discord.Interaction):
         await interaction.followup.send("❌ No quota has been logged.", ephemeral=True)
         return
 
-    # Clear logs after reporting
     c.execute("DELETE FROM shifts")
     conn.commit()
 
