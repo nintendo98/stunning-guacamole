@@ -11,8 +11,8 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="/", intents=intents)
 
-TOKEN = "YOUR_BOT_TOKEN"
-GUILD_ID = YOUR_GUILD_ID  # Replace with your server's ID
+TOKEN = os.getenv("TOKEN")
+GUILD_ID = 975476850144976916  # Replace with your server's ID
 DATABASE = "shifts.db"
 
 # Role IDs
