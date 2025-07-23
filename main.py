@@ -269,7 +269,6 @@ async def countallquota(interaction: discord.Interaction):
     any_logged = False
 
     for member in guild.members:
-        # *** Skip non-WSP members ***
         if WSP_ROLE_ID not in [role.id for role in member.roles]:
             continue
 
@@ -307,8 +306,9 @@ async def countallquota(interaction: discord.Interaction):
         await interaction.followup.send("❌ No quota has been logged.", ephemeral=True)
         return
 
-    c.execute("DELETE FROM shifts")
-    conn.commit()
+    # Removed the following lines to keep data after countallquota
+    # c.execute("DELETE FROM shifts")
+    # conn.commit()
 
     await interaction.followup.send(message)
 
