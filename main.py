@@ -325,22 +325,4 @@ async def resetquota(interaction: discord.Interaction):
 
     await interaction.followup.send("✅ All quota logs have been cleared.", ephemeral=True)
 
-# Your other commands like /logshift, /countallquota, etc...
-
-@bot.tree.command(name="deletelastshift", description="Delete your most recently logged shift")
-async def deletelastshift(interaction: discord.Interaction):
-    user_id = str(interaction.user.id)
-
-    c.execute("SELECT rowid FROM shifts WHERE user_id = ? ORDER BY rowid DESC LIMIT 1", (user_id,))
-    result = c.fetchone()
-
-    if result is None:
-        await interaction.response.send_message("❌ You have no logged shifts to delete.", ephemeral=True)
-        return
-
-    c.execute("DELETE FROM shifts WHERE rowid = ?", (result[0],))
-    conn.commit()
-
-    await interaction.response.send_message("✅ Your last logged shift has been deleted.", ephemeral=True)
-
 bot.run(TOKEN)
